@@ -1,0 +1,3 @@
+[submodule "rma-buffer"]
+	path = rma-buffer
+	url = https://github.com/swfrench/rma-buffer.git
