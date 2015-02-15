@@ -1,5 +1,5 @@
 CXX = mpicxx
-CXXFLAGS = --std=c++11 -fno-PIE
+CXXFLAGS = --std=c++11 -fno-PIE -Irma-buffer
 LDFLAGS = -fno-PIE
 
 # maximum number of function parameters to support

@@ -1,11 +1,6 @@
-/*
- * TODO: Clearly, it would be nice to implement this over one-sided MPI RMA in
- * lieu of non-blocking two-sided calls (based on speculative receives).
- * This will require a one-sided task queue implementation, which is a (separate)
- * work in progress.
- */
+#include "rma_buff.hpp"
 
-#include "async.hpp"
+#include "async_templates.hpp"
 
 #include <list>
 #include <thread>
@@ -20,23 +15,34 @@
 
 #include <mpi.h>
 
-#define ASYNC_MSG_SIZE 512
-
-#define ASYNC_TAG_ENQUEUE 1024
-#define ASYNC_TAG_DECREMENT 2048
-
-#define mpi_assert(X) assert(X == MPI_SUCCESS);
+#define ASYNC_ARGS_SIZE 512
 
 typedef unsigned char byte;
 
 struct task
 {
-  int rank;  // sender or receiver, depending on which queue
-  byte *task_data;
-  task(int d, byte *t) : rank(d), task_data(t) {}
-};
+  int origin, target;
+  fptr task_func;
+  byte task_args_data[ASYNC_ARGS_SIZE];
+  task() {}
+  task(int o, int t, fptr tf, byte *ta, size_t sz) :
+    origin(o), target(t), task_func(tf)
+  {
+    assert(sz <= ASYNC_ARGS_SIZE);
+    memcpy(task_args_data, ta, sz);
+  }
+} __attribute__ ((packed));
+
+#define ASYNC_MSG_SIZE sizeof(struct task);
+#define ASYNC_MSG_BUFFLEN 128
+
+#define mpi_assert(X) assert(X == MPI_SUCCESS);
+
+// maybe represent task with packed struct?
+// src, dst, fp, and data?
 
 static std::thread *th_progress;
+static std::thread *th_comm;
 
 static std::mutex task_queue_mtx;
 static std::mutex outgoing_task_queue_mtx;
@@ -46,19 +52,37 @@ static std::list<task *> outgoing_task_queue;
 
 static std::atomic<bool> done(false);
 
-static std::atomic<int> cb_count(0);
-
 static int my_rank;
 static MPI_Comm my_comm;
+static MPI_Win cb_win;
+static int *cb_count;
+
+static rma_buff<task> *task_buff;
 
 /*
- * Unpack a task byte array and execute it
+ * Decrement the callback counter on the specified rank
  */
-void execute(byte *task_data)
+static void cb_dec(int target)
 {
-  fptr rp = *(fptr *)task_data;
-  void *tp = (void *)(task_data + sizeof(fptr));
-  rp(tp);
+  int dec = -1;
+  mpi_assert(MPI_Win_lock(MPI_LOCK_SHARED, target, 0, cb_win));
+  mpi_assert(MPI_Accumulate(&dec,
+                            1, MPI_INT, target, 0,
+                            1, MPI_INT, MPI_SUM, cb_win));
+  mpi_assert(MPI_Win_unlock(target, cb_win));
+}
+
+/*
+ * Increment the callback counter on the specified rank
+ */
+static void cb_inc(int target)
+{
+  int inc = 1;
+  mpi_assert(MPI_Win_lock(MPI_LOCK_SHARED, target, 0, cb_win));
+  mpi_assert(MPI_Accumulate(&inc,
+                            1, MPI_INT, target, 0,
+                            1, MPI_INT, MPI_SUM, cb_win));
+  mpi_assert(MPI_Win_unlock(target, cb_win));
 }
 
 /*
@@ -68,84 +92,37 @@ void execute(byte *task_data)
  */
 void enqueue(int target, fptr rp, void *tp, size_t sz)
 {
-  byte *task_data;
-
-  assert(sz + sizeof(fptr) <= ASYNC_MSG_SIZE);
-  task_data = new byte[ASYNC_MSG_SIZE];
-
-  memcpy(task_data, (void *)&rp, sizeof(fptr));
-  memcpy(task_data + sizeof(fptr), tp, sz);
-
+  task *t = new task(my_rank, target, rp, tp, sz);
   if (target == my_rank) {
     task_queue_mtx.lock();
-    task_queue.push_back(new task(target, task_data));
+    task_queue.push_back(t);
     task_queue_mtx.unlock();
   } else {
     outgoing_task_queue_mtx.lock();
-    outgoing_task_queue.push_back(new task(target, task_data));
+    outgoing_task_queue.push_back(t);
     outgoing_task_queue_mtx.unlock();
   }
-
-  cb_count++;
+  cb_inc(my_rank);
 }
 
-/*
- * Work performed by the progress thread:
- * 1. servicing remotely invoked task messages for which we are the target; these
- *    are routed to the local execution task_queue
- * 2. sending locally invoked task messages to their targets; these are taken
- *    from the outgoin_task_queue
- * 3. servicing remotely invoked callback decrement operations
- * 4. executing enqeued tasks from the task_queue and sending associated remote
- *    callback decrement messages
- * The task thread is started in async_enable().
- *
- * N.B. All enqueued tasks are dropped on the floor when done becomes false.
- * This means that care must be taken to ensure the cb_count has fallen back to
- * zero *everywhere* before signaling progress thread exit in this manner.
- */
-void progress()
+void mover()
 {
-  MPI_Request t_req, cb_req;
-  byte task_data_in[ASYNC_MSG_SIZE];
-  mpi_assert(MPI_Irecv(task_data_in, ASYNC_MSG_SIZE, MPI_BYTE,
-                       MPI_ANY_SOURCE, ASYNC_TAG_ENQUEUE,
-                       my_comm, &t_req));
-  mpi_assert(MPI_Irecv(NULL, 0, MPI_BYTE,
-                       MPI_ANY_SOURCE, ASYNC_TAG_DECREMENT,
-                       my_comm, &cb_req));
+  task task_msg_in[ASYNC_MSG_BUFFLEN];
   while (! done) {
-    int have_msg;
-    MPI_Status stat;
-    task *msg;
-    byte *task_data;
-
+    int nmsg;
     // service incoming tasks (enqueue them for execution)
-    mpi_assert(MPI_Test(&t_req, &have_msg, &stat));
-    if (have_msg) {
-      task_data = new byte[ASYNC_MSG_SIZE];
-      memcpy(task_data, task_data_in, ASYNC_MSG_SIZE);
-      task_queue_mtx.lock();
-      task_queue.push_back(new task(stat.MPI_SOURCE,
-                                    task_data));
-      task_queue_mtx.unlock();
-      mpi_assert(MPI_Irecv(task_data_in,
-                           ASYNC_MSG_SIZE, MPI_BYTE,
-                           MPI_ANY_SOURCE, ASYNC_TAG_ENQUEUE,
-                           my_comm, &t_req));
-    }
-
-    // service incoming callback decrements
-    mpi_assert(MPI_Test(&cb_req, &have_msg, &stat));
-    if (have_msg) {
-      cb_count--;
-      mpi_assert(MPI_Irecv(NULL, 0, MPI_BYTE,
-                           MPI_ANY_SOURCE, ASYNC_TAG_DECREMENT,
-                           my_comm, &cb_req));
+    if ((nmsg = task_buff->get(task_msg_in)) > 0) {
+      for (int i = 0; i < nmsg; i++) {
+        task *t = new task();
+        memcpy(t, task_msg_in[i], ASYNC_MSG_SIZE);
+        task_queue_mtx.lock();
+        task_queue.push_back((task *) t);
+        task_queue_mtx.unlock();
+      }
     }
 
     // send outgoing tasks
-    msg = NULL;
+    task *msg = NULL;
     outgoing_task_queue_mtx.lock();
     if (! outgoing_task_queue.empty()) {
       msg = outgoing_task_queue.front();
@@ -153,16 +130,18 @@ void progress()
     }
     outgoing_task_queue_mtx.unlock();
     if (msg != NULL) {
-      mpi_assert(MPI_Send(msg->task_data,
-                          ASYNC_MSG_SIZE, MPI_BYTE,
-                          msg->rank, ASYNC_TAG_ENQUEUE,
-                          my_comm));
-      delete [] msg->task_data;
+      while (! task_buff->put(msg->target, msg)) {
+        printf("Retrying put\n");
+      }
       delete msg;
     }
+  }
+}
 
-    // execute enqueued task, possibly sending callback decrement op
-    msg = NULL;
+void executer()
+{
+  while (! done) {
+    task *msg = NULL;
     task_queue_mtx.lock();
     if (! task_queue.empty()) {
       msg = task_queue.front();
@@ -170,20 +149,11 @@ void progress()
     }
     task_queue_mtx.unlock();
     if (msg != NULL) {
-      execute(msg->task_data);
-      if (msg->rank == my_rank)
-        cb_count--;
-      else
-        mpi_assert(MPI_Send(NULL, 0, MPI_BYTE,
-                            msg->rank, ASYNC_TAG_DECREMENT,
-                            my_comm));
-      delete [] msg->task_data;
+      msg->task_func(msg->task_data);
+      cb_dec(msg->origin);
       delete msg;
     }
   }
-  // exiting: cancel the outstanding receives
-  mpi_assert(MPI_Cancel(&t_req));
-  mpi_assert(MPI_Cancel(&cb_req));
 }
 
 /*
@@ -193,6 +163,7 @@ void progress()
 void async_enable(MPI_Comm comm)
 {
   int mpi_init, mpi_thread;
+
   mpi_assert(MPI_Initialized(&mpi_init));
   assert(mpi_init);
   mpi_assert(MPI_Query_thread(&mpi_thread));
@@ -202,6 +173,8 @@ void async_enable(MPI_Comm comm)
   mpi_assert(MPI_Comm_rank(my_comm, &my_rank));
 
   th_progress = new std::thread(progress);
+
+  task_buff = new rma_buff<task>(1, ASYNC_MSG_BUFFLEN);
 
   mpi_assert(MPI_Barrier(my_comm));
 }
