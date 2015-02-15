@@ -74,7 +74,7 @@ void async(int target, F f)
 {
   task0<F> *t = new task0<F>(f);
   fptr rp = (fptr) runner<F>;
-  enqueue(target, rp, (void *)t, sizeof(*t));
+  _enqueue(target, rp, (void *)t, sizeof(*t));
 }
 
 END
@@ -129,7 +129,7 @@ void async(int target, $proto)
 {
   $name<$ttypes> *t = new $name<$ttypes>($proto_vars);
   fptr rp = (fptr) runner<$ttypes>;
-  enqueue(target, rp, (void *)t, sizeof(*t));
+  _enqueue(target, rp, (void *)t, sizeof(*t));
 }
 
 END

@@ -1,13 +1,4 @@
-/**
- * Asynchronous remote tasks over MPI
- */
 #pragma once
-
-#include <stdlib.h>
-#include <mpi.h>
-
-// generic function pointer used throughout
-typedef void (*fptr)(void *);
 
 /*
  * Task argument and callback structures
