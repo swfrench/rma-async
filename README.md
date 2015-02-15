@@ -1,24 +1,26 @@
-# Asynchronous remote tasks over MPI
+# Asynchronous remote tasks over MPI-3 RMA
 
-This version is really just a proof-of-concept to get local task management
-and template magic working correctly (e.g. embedding the correct function
-and argument-wrapper types).
+Asynchronous remote task execution implemented on top of MPI-3 RMA. All
+supporting communications are one-sided, including the incoming RMA task
+buffers (which use the minimal
+[rma-buffer](https://github.com/swfrench/rma-buffer)).
 
-As such it's based purely on (speculative) MPI-1 non-blocking two-sided
-comms executed by a progress thread (the latter using a number of C++11
-features).
+## Implementation
+
+More soon
+
+### Communications
+
+### Threading
 
 ## TODO
 
-The obvious (and most interesting) items to explore are:
-
-1. Better code generation for the type-embedding wrapper structs (maybe there
-   is something that can be done with variadic templates).
-
-2. Re-implementation of the comms to use MPI RMA, which will require some
-   kind of one-sided message queue (the callback counter can easily be
-   implemented directly).
-
-Even after (2) is implemented, the progress thread will likely remain a
-persistent feature, as it is also responsible for executing enqueued tasks.
-
+1.  The current code is designed as a library, with a number of internal static
+    data structures and support routines. This could fairly easily be
+    integrated into a single class, although I'm not sure this would really
+    improve the interface per se.
+2.  The automatic generation of async wrapper / runner template structs (which
+    encode the type of the asynchronous task function and capture its
+    arguments) is a bit awkward. Perhaps we can do something neat with variadic
+    templates instead?
+3.  Dependency management between async tasks ("events" similar to UPC++?)
