@@ -36,9 +36,9 @@ OBJ = $O/async.o
 
 LIB = $L/librma_async.a
 
-all : $L $O $(LIB)
+all : $(LIB)
 
-$(LIB) : $(OBJ)
+$(LIB) : $L $O $(OBJ)
 	$(AR) $@ $(OBJ)
 	$(RANLIB) $@
 
