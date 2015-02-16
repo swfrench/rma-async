@@ -12,7 +12,7 @@
 
 #include <mpi.h>
 
-#include "rma_buff.hpp"
+#include "rma-buffer/rma_buff.hpp"
 
 #include "async.hpp"
 
