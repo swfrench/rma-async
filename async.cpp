@@ -16,11 +16,14 @@
 
 #include "async.hpp"
 
+typedef unsigned char byte;
+
+// do concurrent (across progress threads) RMA calls for updating callback
+// counters need to be protected with a mutex
 #define REQUIRE_CB_MUTEX
 
+// default max size for the packed async runner argument buffer
 #define ASYNC_ARGS_SIZE 512
-
-typedef unsigned char byte;
 
 // task representation for messaging and internal queues
 struct task
@@ -37,8 +40,11 @@ struct task
   }
 } __attribute__ ((packed));
 
+// inferred async task message size
 #define ASYNC_MSG_SIZE sizeof(struct task)
-#define ASYNC_MSG_BUFFLEN 128
+
+// length of the async message buffer
+#define ASYNC_MSG_BUFFLEN 2048
 
 #ifndef mpi_assert
 #define mpi_assert(X) assert(X == MPI_SUCCESS);
@@ -184,7 +190,7 @@ static void mover()
     if (nmsg == 0 && msg == NULL)
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-}
+} /* static void mover() */
 
 /*
  * Action performed by the executor thread: remove tasks from the queue and run
@@ -207,7 +213,7 @@ static void executor()
     } else
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-}
+} /* static void executor() */
 
 /**
  * Route a task to the correct queue for exection on the target
@@ -254,20 +260,25 @@ void async_enable(MPI_Comm comm)
   mpi_assert(MPI_Query_thread(&mpi_thread));
   assert(mpi_thread == MPI_THREAD_MULTIPLE);
 
+  // set communicator and rank
   my_comm = comm;
   mpi_assert(MPI_Comm_rank(my_comm, &my_rank));
 
+  // setup callback counter
   mpi_assert(MPI_Alloc_mem(sizeof(int), MPI_INFO_NULL, &cb_count));
   *cb_count = 0;
   mpi_assert(MPI_Win_create(cb_count, sizeof(int), sizeof(int),
                             MPI_INFO_NULL,
                             comm, &cb_win));
 
+  // setup the task buffer
   task_buff = new rma_buff<task>(1, ASYNC_MSG_BUFFLEN, comm);
 
+  // setup the progress threads
   th_mover = new std::thread(mover);
   th_executor = new std::thread(executor);
 
+  // synchronize and return
   mpi_assert(MPI_Barrier(my_comm));
 }
 
@@ -279,12 +290,19 @@ void async_enable(MPI_Comm comm)
  */
 void async_disable()
 {
+  // wait for all outstanding tasks to complete
   while (cb_get(my_rank))
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+  // synchronize
   mpi_assert(MPI_Barrier(my_comm));
+
+  // no more work to do; shut down the progress threads
   done = true;
   th_mover->join();
   th_executor->join();
+
+  // clean up
   mpi_assert(MPI_Win_free(&cb_win));
   mpi_assert(MPI_Free_mem(cb_count));
   delete th_mover;
