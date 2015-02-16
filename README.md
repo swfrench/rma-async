@@ -1,17 +1,40 @@
 # Asynchronous remote tasks over MPI-3 RMA
 
-Asynchronous remote task execution implemented on top of MPI-3 RMA. All
-supporting communications are one-sided, including the incoming RMA task
-buffers (which use the minimal
-[rma-buffer](https://github.com/swfrench/rma-buffer)).
+Asynchronous remote task execution implemented on top of MPI-3 RMA.
+
+All supporting communications are one-sided, including the incoming RMA task
+buffers (using [rma-buffer](https://github.com/swfrench/rma-buffer)).
 
 ## Implementation
 
-More soon
+More details soon.
 
 ### Communications
 
+All communications are based on MPI-3 RMA operations, using a combination of
+shared counters implemented with `MPI_Accumulate` / `MPI_Fetch_and_op` and the
+RMA-based remote buffer implementation described
+[here](https://github.com/swfrench/rma-buffer) (a dependency and thus
+sub-module of this repo).
+
 ### Threading
+
+At present, two progress threads are used in order to facilitate timely
+execution of the asynchronous tasks:
+
+* `mover`: responsible for managing the one-sided buffer, enqueueing incoming
+  tasks in the local execution queue and placing outgoing tasks in the
+  corresponding buffer on the target
+* `executor`: responsible for executing tasks in the local execution queue and
+  notifying the origin of their completion (at the moment, simply by
+  decrementing the callback counter on the origin)
+
+This may change later on. For example, in the interest of having fewer threads
+running and if the async tasks are expected to be fairly light-weight, one
+could add the option of using only a single progress thread, thereby merging
+the `mover` and `executor`. Conversely, if async tasks are expected to be
+heavier-weight, one could instead implement a thread *pool* dedicated to task
+execution.
 
 ## TODO
 
