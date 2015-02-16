@@ -150,7 +150,7 @@ static int cb_get(int target)
  */
 static void mover()
 {
-  task task_msg_in[ASYNC_MSG_BUFFLEN];
+  task *task_msg_in = new task[ASYNC_MSG_BUFFLEN];
   while (! done) {
     int nmsg;
     // service incoming tasks (enqueue them for execution)
@@ -190,6 +190,7 @@ static void mover()
     if (nmsg == 0 && msg == NULL)
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
+  delete [] task_msg_in;
 } /* static void mover() */
 
 /*
