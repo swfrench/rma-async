@@ -6,7 +6,7 @@ buffers (using [rma-buffer](https://github.com/swfrench/rma-buffer)).
 
 This is largely a proof-of-concept and remains a work in progress. The basic
 idea is to adopt a model of asynchronous task execution similar to that in
-UPC++ [1][] and to demonstrate one particular way it could be implemented on
+UPC++ [^1] and to demonstrate one particular way it could be implemented on
 top of MPI-3.
 
 ## Implementation
@@ -56,4 +56,4 @@ There are a number of potential areas for improvement:
 
 ## References
 
-[1]: [https://bitbucket.org/upcxx/upcxx](https://bitbucket.org/upcxx/upcxx)
+[^1]: [https://bitbucket.org/upcxx/upcxx](https://bitbucket.org/upcxx/upcxx)
