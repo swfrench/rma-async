@@ -3,7 +3,7 @@
 
 # compilation
 CXX = mpicxx
-CXXFLAGS = -g -O --std=c++11 -fno-PIE
+CXXFLAGS = -g -O2 --std=c++11 -fno-PIE
 
 # linking
 LD = mpicxx

@@ -77,6 +77,34 @@ void async(int target, F f)
   _enqueue(target, rp, (void *)t, sizeof(*t));
 }
 
+template<typename F>
+handle_t async_handle(int target, F f)
+{
+  handle_t h;
+  task0<F> *t = new task0<F>(f);
+  fptr rp = (fptr) runner<F>;
+  _enqueue_handle(target, rp, (void *)t, sizeof(*t), &h);
+  return h;
+}
+
+template<typename F>
+void async_after(handle_t a, int target, F f)
+{
+  task0<F> *t = new task0<F>(f);
+  fptr rp = (fptr) runner<F>;
+  _enqueue_after(target, rp, (void *)t, sizeof(*t), a);
+}
+
+template<typename F>
+handle_t async_chain(handle_t a, int target, F f)
+{
+  handle_t h;
+  task0<F> *t = new task0<F>(f);
+  fptr rp = (fptr) runner<F>;
+  _enqueue_chain(target, rp, (void *)t, sizeof(*t), a, &h);
+  return h;
+}
+
 END
 
 ################################################################################
@@ -130,6 +158,34 @@ void async(int target, $proto)
   $name<$ttypes> *t = new $name<$ttypes>($proto_vars);
   fptr rp = (fptr) runner<$ttypes>;
   _enqueue(target, rp, (void *)t, sizeof(*t));
+}
+
+template<$template>
+handle_t async_handle(int target, $proto)
+{
+  handle_t h;
+  $name<$ttypes> *t = new $name<$ttypes>($proto_vars);
+  fptr rp = (fptr) runner<$ttypes>;
+  _enqueue_handle(target, rp, (void *)t, sizeof(*t), &h);
+  return h;
+}
+
+template<$template>
+void async_after(handle_t a, int target, $proto)
+{
+  $name<$ttypes> *t = new $name<$ttypes>($proto_vars);
+  fptr rp = (fptr) runner<$ttypes>;
+  _enqueue_after(target, rp, (void *)t, sizeof(*t), a);
+}
+
+template<$template>
+handle_t async_chain(handle_t a, int target, $proto)
+{
+  handle_t h;
+  $name<$ttypes> *t = new $name<$ttypes>($proto_vars);
+  fptr rp = (fptr) runner<$ttypes>;
+  _enqueue_chain(target, rp, (void *)t, sizeof(*t), a, &h);
+  return h;
 }
 
 END

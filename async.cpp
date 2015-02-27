@@ -3,6 +3,7 @@
 #include <list>
 #include <mutex>
 #include <thread>
+#include <unordered_set>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,11 +17,8 @@
 
 #include "async.hpp"
 
+// generic byte
 typedef unsigned char byte;
-
-// do concurrent (across progress threads) RMA calls for updating callback
-// counters need to be protected with a mutex
-#define REQUIRE_CB_MUTEX
 
 // default max size for the packed async runner argument buffer
 #define ASYNC_ARGS_SIZE 512
@@ -29,16 +27,40 @@ typedef unsigned char byte;
 struct task
 {
   int origin, target;
+  bool depends, notify;
+  handle_t handle, after;
   fptr task_func;
   byte task_runner_args[ASYNC_ARGS_SIZE];
+
   task() {}
+
   task(int o, int t, fptr tf, byte *ta, size_t sz) :
-    origin(o), target(t), task_func(tf)
+    origin(o), target(t), task_func(tf), depends(false), notify(false)
   {
     assert(sz <= ASYNC_ARGS_SIZE);
     memcpy(task_runner_args, ta, sz);
   }
+
+  void set_depends(handle_t a)
+  {
+    depends = true;
+    after = a;
+  }
+
+  void set_notify(handle_t h)
+  {
+    notify = true;
+    handle = h;
+  }
 } __attribute__ ((packed));
+
+//
+struct notify
+{
+  int target;
+  handle_t handle;
+  notify(int t, handle_t h) : target(t), handle(h) {}
+};
 
 // inferred async task message size
 #define ASYNC_MSG_SIZE sizeof(struct task)
@@ -50,9 +72,13 @@ struct task
 #define mpi_assert(X) assert(X == MPI_SUCCESS);
 #endif
 
-// message buffer object: handles incoming / outgoing task messages; managed
-// by the mover thread
+// task buffer object: handles incoming / outgoing task messages; managed by
+// the mover thread
 static rma_buff<task> *task_buff;
+
+// handle buffer object: handles incoming / outgoing completion notifications;
+// also managed by the mover thread
+static rma_buff<handle_t> *notify_buff;
 
 // progress threads: message mover and task executor
 static std::thread *th_mover;
@@ -61,16 +87,19 @@ static std::thread *th_executor;
 // exit flag for progress threads
 static std::atomic<bool> done(false);
 
+// counter for async handles
+static std::atomic<handle_t> handle_source(0);
+
 // mutual exclusion for task queues and (maybe) local updates to cb_count
 static std::mutex task_queue_mtx;
 static std::mutex outgoing_task_queue_mtx;
-#ifdef REQUIRE_CB_MUTEX
+static std::mutex outgoing_notify_queue_mtx;
 static std::mutex cb_mutex;
-#endif
 
 // task queues
 static std::list<task *> task_queue;
 static std::list<task *> outgoing_task_queue;
+static std::list<notify *> outgoing_notify_queue;
 
 // general mpi
 static int my_rank;
@@ -80,25 +109,24 @@ static MPI_Comm my_comm;
 static int *cb_count;
 static MPI_Win cb_win;
 
+// completed task handle set
+static std::unordered_set<handle_t> completed_tasks;
+
 /*
  * Decrement the callback counter on the specified rank
  */
 static void cb_dec(int target)
 {
   int dec = -1;
-#ifdef REQUIRE_CB_MUTEX
   if (target == my_rank)
     cb_mutex.lock();
-#endif
   mpi_assert(MPI_Win_lock(MPI_LOCK_EXCLUSIVE, target, 0, cb_win));
   mpi_assert(MPI_Accumulate(&dec,
                             1, MPI_INT, target, 0,
                             1, MPI_INT, MPI_SUM, cb_win));
   mpi_assert(MPI_Win_unlock(target, cb_win));
-#ifdef REQUIRE_CB_MUTEX
   if (target == my_rank)
     cb_mutex.unlock();
-#endif
 }
 
 /*
@@ -107,19 +135,15 @@ static void cb_dec(int target)
 static void cb_inc(int target)
 {
   int inc = 1;
-#ifdef REQUIRE_CB_MUTEX
   if (target == my_rank)
     cb_mutex.lock();
-#endif
   mpi_assert(MPI_Win_lock(MPI_LOCK_EXCLUSIVE, target, 0, cb_win));
   mpi_assert(MPI_Accumulate(&inc,
                             1, MPI_INT, target, 0,
                             1, MPI_INT, MPI_SUM, cb_win));
   mpi_assert(MPI_Win_unlock(target, cb_win));
-#ifdef REQUIRE_CB_MUTEX
   if (target == my_rank)
     cb_mutex.unlock();
-#endif
 }
 
 /*
@@ -128,19 +152,15 @@ static void cb_inc(int target)
 static int cb_get(int target)
 {
   int val;
-#ifdef REQUIRE_CB_MUTEX
   if (target == my_rank)
     cb_mutex.lock();
-#endif
   mpi_assert(MPI_Win_lock(MPI_LOCK_EXCLUSIVE, target, 0, cb_win));
   mpi_assert(MPI_Get(&val,
                      1, MPI_INT, target, 0,
                      1, MPI_INT, cb_win));
   mpi_assert(MPI_Win_unlock(target, cb_win));
-#ifdef REQUIRE_CB_MUTEX
   if (target == my_rank)
     cb_mutex.unlock();
-#endif
   return val;
 }
 
@@ -151,8 +171,14 @@ static int cb_get(int target)
 static void mover()
 {
   task *task_msg_in = new task[ASYNC_MSG_BUFFLEN];
+  handle_t *notify_msg_in = new handle_t[ASYNC_MSG_BUFFLEN];
   while (! done) {
     int nmsg;
+
+    //
+    // service incoming / outgoing tasks
+    //
+
     // service incoming tasks (enqueue them for execution)
     if ((nmsg = task_buff->get(task_msg_in, 1)) > 0) {
       for (int i = 0; i < nmsg; i++) {
@@ -173,23 +199,53 @@ static void mover()
     }
     outgoing_task_queue_mtx.unlock();
     if (msg != NULL) {
-      // try to place task on the target (non-blocking)
-      if (task_buff->put(msg->target, msg)) {
+      bool success = false;
+      if (! msg->depends || completed_tasks.count(msg->after) > 0)
+        success = task_buff->put(msg->target, msg);
+      if (success) {
         // success: clean up
         delete msg;
       } else {
-        // failure: the target buffer must be full; put the message back in
-        // the queue and retry later
+        // failure: the target buffer must be full or the dependency has not
+        // yet executed; put the message back in the queue and retry later
         outgoing_task_queue_mtx.lock();
         outgoing_task_queue.push_back(msg);
         outgoing_task_queue_mtx.unlock();
       }
     }
 
-    // possibly sleep if there was no work to do
-    if (nmsg == 0 && msg == NULL)
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    //
+    // service incoming / outgoing completion notifications
+    //
+
+    // service incoming completion notifications; only the mover thread ever
+    // touches the completed_tasks set, so no mutex is needed
+    if ((nmsg = notify_buff->get(notify_msg_in, 1)) > 0)
+      for (int i = 0; i < nmsg; i++)
+        completed_tasks.insert(notify_msg_in[i]);
+
+    // place outgoing notifications on their respective targets
+    notify *n = NULL;
+    outgoing_notify_queue_mtx.lock();
+    if (! outgoing_notify_queue.empty()) {
+      n = outgoing_notify_queue.front();
+      outgoing_notify_queue.pop_front();
+    }
+    outgoing_notify_queue_mtx.unlock();
+    if (n != NULL) {
+      if (notify_buff->put(n->target, &n->handle)) {
+        // success: clean up
+        delete n;
+      } else {
+        // failure: the target buffer must be full; put the message back in the
+        // queue and retry later
+        outgoing_notify_queue_mtx.lock();
+        outgoing_notify_queue.push_back(n);
+        outgoing_notify_queue_mtx.unlock();
+      }
+    }
   }
+  delete [] notify_msg_in;
   delete [] task_msg_in;
 } /* static void mover() */
 
@@ -210,6 +266,12 @@ static void executor()
     if (msg != NULL) {
       msg->task_func(msg->task_runner_args);
       cb_dec(msg->origin);
+      if (msg->notify) {
+        notify *n = new notify(msg->origin, msg->handle);
+        outgoing_notify_queue_mtx.lock();
+        outgoing_notify_queue.push_back(n);
+        outgoing_notify_queue_mtx.unlock();
+      }
       delete msg;
     } else
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -217,12 +279,15 @@ static void executor()
 } /* static void executor() */
 
 /**
- * Route a task to the correct queue for exection on the target
+ * Route a task to the correct queue for exection on the target: variant 1
  *
  * This routine will fast-path to our own local execution queue if we are in
  * fact the target. While it is not a user-facing function per se, it is called
  * by the \c async() task invocation launch functions (and thus cannot have
  * static linkage).
+ *
+ * In this particular variant, we include no logic for async dependency
+ * enforcement (i.e. ordering either before or after other tasks).
  *
  * \param target target rank for task execution
  * \param rp pointer to the appropriate runner function
@@ -232,6 +297,111 @@ static void executor()
 void _enqueue(int target, fptr rp, void *tp, size_t sz)
 {
   task *t = new task(my_rank, target, rp, (byte *)tp, sz);
+  if (target == my_rank) {
+    task_queue_mtx.lock();
+    task_queue.push_back(t);
+    task_queue_mtx.unlock();
+  } else {
+    outgoing_task_queue_mtx.lock();
+    outgoing_task_queue.push_back(t);
+    outgoing_task_queue_mtx.unlock();
+  }
+  cb_inc(my_rank);
+}
+
+/**
+ * Route a task to the correct queue for exection on the target: variant 2
+ *
+ * This routine will fast-path to our own local execution queue if we are in
+ * fact the target. While it is not a user-facing function per se, it is called
+ * by the \c async() task invocation launch functions (and thus cannot have
+ * static linkage).
+ *
+ * In this particular variant, we include logic for async dependency
+ * enforcement that allows subsequent tasks to be ordered after this one.
+ *
+ * \param target target rank for task execution
+ * \param rp pointer to the appropriate runner function
+ * \param tp pointer to the packed task data (function pointer and args)
+ * \param sz size (bytes) of the packed task data
+ * \param h pointer to which this task's handle will be written
+ */
+void _enqueue_handle(int target, fptr rp, void *tp, size_t sz, handle_t *h)
+{
+  *h = handle_source++;
+  task *t = new task(my_rank, target, rp, (byte *)tp, sz);
+  t->set_notify(*h);
+  if (target == my_rank) {
+    task_queue_mtx.lock();
+    task_queue.push_back(t);
+    task_queue_mtx.unlock();
+  } else {
+    outgoing_task_queue_mtx.lock();
+    outgoing_task_queue.push_back(t);
+    outgoing_task_queue_mtx.unlock();
+  }
+  cb_inc(my_rank);
+}
+
+/**
+ * Route a task to the correct queue for exection on the target: variant 3
+ *
+ * This routine will fast-path to our own local execution queue if we are in
+ * fact the target. While it is not a user-facing function per se, it is called
+ * by the \c async() task invocation launch functions (and thus cannot have
+ * static linkage).
+ *
+ * In this particular variant, we include logic for async dependency
+ * enforcement that allows this task to execute only after a specific earlier
+ * one.
+ *
+ * \param target target rank for task execution
+ * \param rp pointer to the appropriate runner function
+ * \param tp pointer to the packed task data (function pointer and args)
+ * \param sz size (bytes) of the packed task data
+ * \param a the handle for the async after which this one may execute
+ */
+void _enqueue_after(int target, fptr rp, void *tp, size_t sz, handle_t a)
+{
+  task *t = new task(my_rank, target, rp, (byte *)tp, sz);
+  t->set_depends(a);
+  if (target == my_rank) {
+    task_queue_mtx.lock();
+    task_queue.push_back(t);
+    task_queue_mtx.unlock();
+  } else {
+    outgoing_task_queue_mtx.lock();
+    outgoing_task_queue.push_back(t);
+    outgoing_task_queue_mtx.unlock();
+  }
+  cb_inc(my_rank);
+}
+
+/**
+ * Route a task to the correct queue for exection on the target: variant 3
+ *
+ * This routine will fast-path to our own local execution queue if we are in
+ * fact the target. While it is not a user-facing function per se, it is called
+ * by the \c async() task invocation launch functions (and thus cannot have
+ * static linkage).
+ *
+ * In this particular variant, we include logic for async dependency
+ * enforcement that allows both subsequent tasks to be ordered after this one
+ * and for this task to execute only after a specific earlier one.
+ *
+ * \param target target rank for task execution
+ * \param rp pointer to the appropriate runner function
+ * \param tp pointer to the packed task data (function pointer and args)
+ * \param sz size (bytes) of the packed task data
+ * \param a the handle for the async after which this one may execute
+ * \param h pointer to which this task's handle will be written
+ */
+void _enqueue_chain(int target, fptr rp, void *tp, size_t sz, handle_t a, handle_t *h)
+{
+  *h = handle_source++;
+  task *t = new task(my_rank, target, rp, (byte *)tp, sz);
+  t->set_depends(a);
+  t->set_notify(*h);
   if (target == my_rank) {
     task_queue_mtx.lock();
     task_queue.push_back(t);
@@ -272,8 +442,9 @@ void async_enable(MPI_Comm comm)
                             MPI_INFO_NULL,
                             comm, &cb_win));
 
-  // setup the task buffer
+  // setup the task and notify buffers
   task_buff = new rma_buff<task>(1, ASYNC_MSG_BUFFLEN, comm);
+  notify_buff = new rma_buff<handle_t>(1, ASYNC_MSG_BUFFLEN, comm);
 
   // setup the progress threads
   th_mover = new std::thread(mover);
@@ -308,5 +479,6 @@ void async_disable()
   mpi_assert(MPI_Free_mem(cb_count));
   delete th_mover;
   delete th_executor;
+  delete notify_buff;
   delete task_buff;
 }
