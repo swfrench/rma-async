@@ -99,10 +99,12 @@ static std::atomic<bool> done(false);
 // counter for async handles
 static std::atomic<handle_t> handle_source(0);
 
-// mutual exclusion for task queues and (maybe) local updates to cb_count
+// mutual exclusion for task queues, updates to cb_count, and the
+// completed_tasks set
 static std::mutex task_queue_mtx;
 static std::mutex outgoing_task_queue_mtx;
 static std::mutex outgoing_notify_queue_mtx;
+static std::mutex completed_tasks_mtx;
 static std::mutex cb_mutex;
 
 // task queues
@@ -211,8 +213,14 @@ static void mover()
     outgoing_task_queue_mtx.unlock();
     if (msg != NULL) {
       bool success = false;
-      if (! msg->depends || completed_tasks.count(msg->after) > 0)
-        success = task_buff->put(msg->target, msg);
+      if (! msg->depends) {
+        int completed;
+        completed_tasks_mtx.lock();
+        completed = completed_tasks.count(msg->after);
+        completed_tasks_mtx.unlock();
+        if (completed)
+          success = task_buff->put(msg->target, msg);
+      }
       if (success) {
         // success: clean up
         delete msg;
@@ -229,11 +237,13 @@ static void mover()
     // service incoming / outgoing completion notifications
     //
 
-    // service incoming completion notifications; only the mover thread ever
-    // touches the completed_tasks set, so no mutex is needed
-    if ((nmsg = notify_buff->get(notify_msg_in, 1)) > 0)
+    // service incoming completion notifications
+    if ((nmsg = notify_buff->get(notify_msg_in, 1)) > 0) {
+      completed_tasks_mtx.lock();
       for (int i = 0; i < nmsg; i++)
         completed_tasks.insert(notify_msg_in[i]);
+      completed_tasks_mtx.unlock();
+    }
 
     // place outgoing notifications on their respective targets
     notify *n = NULL;
@@ -493,4 +503,26 @@ void async_disable()
   delete th_executor;
   delete notify_buff;
   delete task_buff;
+}
+
+/**
+ * Block until we receive notification that the task associated with the
+ * supplied handle has executed on the target.
+ *
+ * Progress will still be made on enqueued tasks and communications while
+ * blocking, owing to the multithreaded nature of the library.
+ *
+ * \param h the \c handle_t associated with the task to wait for
+ */
+void async_wait(handle_t h)
+{
+  for (;;) {
+    int completed;
+    completed_tasks_mtx.lock();
+    completed = completed_tasks.count(h);
+    completed_tasks_mtx.unlock();
+    if (completed)
+      return;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
 }
