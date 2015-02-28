@@ -90,6 +90,9 @@ There are a number of potential areas for improvement:
 3.  ~~Dependency management between async tasks ("events" similar to UPC++?).~~
     A preliminary implementation of inter-task dependency management has been
     added.
+4.  The dependency model is currently tree-like (an async can have only one
+    dependency but any number of dependents). Should this instead support more
+    general DAGs?
 
 ## References
 
