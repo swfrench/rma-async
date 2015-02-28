@@ -11,7 +11,8 @@ top of MPI-3.
 
 ## Interface
 
-Here's a quick peak at what actually using this might look like:
+Here's a quick look at what actually using this might look like, using C++11
+lambdas (regular functions should work as well):
 
     async_enable(MPI_COMM_WORLD);
 
