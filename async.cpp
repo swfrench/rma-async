@@ -107,13 +107,11 @@ static std::atomic<bool> done(false);
 // counter for async handles
 static std::atomic<handle_t> handle_source(0);
 
-// mutual exclusion for task queues, updates to cb_count, and the
-// completed_tasks set
+// mutual exclusion for task queues and the completed_tasks set
 static std::mutex task_queue_mtx;
 static std::mutex outgoing_task_queue_mtx;
 static std::mutex outgoing_notify_queue_mtx;
 static std::mutex completed_tasks_mtx;
-static std::mutex cb_mutex;
 
 // task queues
 static std::list<task *> task_queue;
@@ -138,15 +136,10 @@ static std::unordered_set<handle_t> completed_tasks;
 static void cb_dec(int target)
 {
   int dec = -1;
-  if (target == my_rank)
-    cb_mutex.lock();
-  mpi_assert(MPI_Win_lock(MPI_LOCK_EXCLUSIVE, target, 0, cb_win));
   mpi_assert(MPI_Accumulate(&dec,
                             1, MPI_INT, target, 0,
                             1, MPI_INT, MPI_SUM, cb_win));
-  mpi_assert(MPI_Win_unlock(target, cb_win));
-  if (target == my_rank)
-    cb_mutex.unlock();
+  mpi_assert(MPI_Win_flush(target, cb_win));
 }
 
 /*
@@ -155,15 +148,10 @@ static void cb_dec(int target)
 static void cb_inc(int target)
 {
   int inc = 1;
-  if (target == my_rank)
-    cb_mutex.lock();
-  mpi_assert(MPI_Win_lock(MPI_LOCK_EXCLUSIVE, target, 0, cb_win));
   mpi_assert(MPI_Accumulate(&inc,
                             1, MPI_INT, target, 0,
                             1, MPI_INT, MPI_SUM, cb_win));
-  mpi_assert(MPI_Win_unlock(target, cb_win));
-  if (target == my_rank)
-    cb_mutex.unlock();
+  mpi_assert(MPI_Win_flush(target, cb_win));
 }
 
 /*
@@ -172,15 +160,9 @@ static void cb_inc(int target)
 static int cb_get(int target)
 {
   int val;
-  if (target == my_rank)
-    cb_mutex.lock();
-  mpi_assert(MPI_Win_lock(MPI_LOCK_EXCLUSIVE, target, 0, cb_win));
-  mpi_assert(MPI_Get(&val,
-                     1, MPI_INT, target, 0,
-                     1, MPI_INT, cb_win));
-  mpi_assert(MPI_Win_unlock(target, cb_win));
-  if (target == my_rank)
-    cb_mutex.unlock();
+  mpi_assert(MPI_Fetch_and_op(NULL, &val, MPI_INT, target, 0,
+                              MPI_NO_OP, cb_win));
+  mpi_assert(MPI_Win_flush(target, cb_win));
   return val;
 }
 
@@ -475,6 +457,11 @@ void async_enable(MPI_Comm comm)
                             MPI_INFO_NULL,
                             comm, &cb_win));
 
+  // start the shared passive access epoch (given the semantics of
+  // MPI_Accumulate and MPI_Fetch_and_op, none of these accesses should be
+  // classified as "conflicting" so MPI_MODE_NOCHECK is appropriate)
+  mpi_assert(MPI_Win_lock_all(MPI_MODE_NOCHECK, cb_win));
+
   // setup the task and notify buffers
   task_buff = new rma_buff<task>(1, ASYNC_MSG_BUFFLEN, comm);
   notify_buff = new rma_buff<handle_t>(1, ASYNC_MSG_BUFFLEN, comm);
@@ -506,6 +493,9 @@ void async_disable()
   done = true;
   th_mover->join();
   th_executor->join();
+
+  // end the shared passive access epoch
+  mpi_assert(MPI_Win_unlock_all(cb_win));
 
   // clean up
   mpi_assert(MPI_Win_free(&cb_win));
