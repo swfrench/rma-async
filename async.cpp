@@ -1,3 +1,10 @@
+/**
+ * \mainpage Asynchronous remote tasks over MPI-3 RMA
+ *
+ * This is a simple, proof-of-concept implementation of asynchronous remote
+ * tasks (a la UPC++) on top of MPI-3 RMA.
+ */
+
 #include <atomic>
 #include <chrono>
 #include <list>
@@ -29,8 +36,8 @@ typedef unsigned char byte;
 #define ASYNC_ARGS_SIZE 512
 #endif
 
+/// @cond INTERNAL_DOCS
 
-// task representation for messaging and internal queues
 struct task
 {
   int origin, target;
@@ -71,6 +78,7 @@ struct notify
   notify(int t, handle_t h) : target(t), handle(h) {}
 };
 
+/// @endcond
 
 // inferred async task message size
 #define ASYNC_MSG_SIZE sizeof(struct task)
@@ -435,6 +443,7 @@ void _enqueue_chain(int target, fptr rp, void *tp, size_t sz, handle_t a, handle
   }
   cb_inc(my_rank);
 }
+
 
 /**
  * Enable asynchronous task execution among ranks on the supplied communicator

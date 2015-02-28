@@ -29,6 +29,8 @@ cat << END > $ASYNC_TASK_DATA
 // automatically generated $(date)
 #pragma once
 
+/// @cond INTERNAL_DOCS
+
 /*
  * Task argument and callback structures
  */
@@ -47,6 +49,8 @@ cat << END > $ASYNC_TASK_RUN
 // automatically generated $(date)
 #pragma once
 
+/// @cond INTERNAL_DOCS
+
 /*
  * Run wrappers (overloaded; embeds casting to appropriate types)
  */
@@ -62,6 +66,7 @@ END
 
 # task invocation
 cat << END > $ASYNC_TASK_INVOKE
+/** @file */
 // automatically generated $(date)
 #pragma once
 
@@ -69,6 +74,11 @@ cat << END > $ASYNC_TASK_INVOKE
  * User-facing async invocation calls (overloaded)
  */
 
+/**
+ * Invoke an async task of zero arguments
+ *
+ * This function is automatically generated.
+ */
 template<typename F>
 void async(int target, F f)
 {
@@ -77,6 +87,12 @@ void async(int target, F f)
   _enqueue(target, rp, (void *)t, sizeof(*t));
 }
 
+/**
+ * Invoke an async task of zero arguments, returning a \c handle_t for later
+ * use in dependency tracking
+ *
+ * This function is automatically generated.
+ */
 template<typename F>
 handle_t async_handle(int target, F f)
 {
@@ -87,6 +103,12 @@ handle_t async_handle(int target, F f)
   return h;
 }
 
+/**
+ * Invoke an async task of zero arguments, accepting a \c handle_t from a task
+ * upon which this one depends
+ *
+ * This function is automatically generated.
+ */
 template<typename F>
 void async_after(handle_t a, int target, F f)
 {
@@ -95,6 +117,13 @@ void async_after(handle_t a, int target, F f)
   _enqueue_after(target, rp, (void *)t, sizeof(*t), a);
 }
 
+/**
+ * Invoke an async task of zero arguments, accepting a \c handle_t from a task
+ * upon which this one depends and returning yet another \c handle_t for later
+ * use in dependency tracking
+ *
+ * This function is automatically generated.
+ */
 template<typename F>
 handle_t async_chain(handle_t a, int target, F f)
 {
@@ -152,6 +181,11 @@ void runner(void *tp)
 
 END
         cat << END >> $ASYNC_TASK_INVOKE
+/**
+ * Invoke an async task of $n arguments
+ *
+ * This function is automatically generated.
+ */
 template<$template>
 void async(int target, $proto)
 {
@@ -160,6 +194,12 @@ void async(int target, $proto)
   _enqueue(target, rp, (void *)t, sizeof(*t));
 }
 
+/**
+ * Invoke an async task of $n arguments, returning a \c handle_t for later
+ * use in dependency tracking
+ *
+ * This function is automatically generated.
+ */
 template<$template>
 handle_t async_handle(int target, $proto)
 {
@@ -170,6 +210,12 @@ handle_t async_handle(int target, $proto)
   return h;
 }
 
+/**
+ * Invoke an async task of $n arguments, accepting a \c handle_t from a task
+ * upon which this one depends
+ *
+ * This function is automatically generated.
+ */
 template<$template>
 void async_after(handle_t a, int target, $proto)
 {
@@ -178,6 +224,13 @@ void async_after(handle_t a, int target, $proto)
   _enqueue_after(target, rp, (void *)t, sizeof(*t), a);
 }
 
+/**
+ * Invoke an async task of $n arguments, accepting a \c handle_t from a task
+ * upon which this one depends and returning yet another \c handle_t for later
+ * use in dependency tracking
+ *
+ * This function is automatically generated.
+ */
 template<$template>
 handle_t async_chain(handle_t a, int target, $proto)
 {
@@ -213,3 +266,6 @@ END
 
 END
 done
+
+echo "/// @endcond" >> $ASYNC_TASK_DATA
+echo "/// @endcond" >> $ASYNC_TASK_RUN

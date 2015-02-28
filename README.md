@@ -9,6 +9,34 @@ idea is to adopt a model of asynchronous task execution similar to that in
 UPC++ [1] and to demonstrate one particular way it could be implemented on
 top of MPI-3.
 
+## Interface
+
+Here's a quick peak at what actually using this might look like:
+
+    async_enable(MPI_COMM_WORLD);
+
+    async(target, [rank] () {
+      printf("i'm shipped from rank %i and no one depends on me\n", rank);
+    });
+
+    handle_t h = async_handle(target, [rank] () {
+      printf("i'm shipped from rank %i\n", rank);
+    });
+
+    async_after(h, target, [rank] () {
+      printf("i'm shipped from rank %i, but i had to wait to execute\n", rank);
+    });
+
+    async_disable();
+
+There's also `async_chain`, which combines the ordering functionality of
+`async_handle` and `async_after`, as well as `async_wait` for explicitly
+waiting on completion of an ealier task.
+
+Note that due to the use of progress threads under the hood, we will continue
+to make progress on executing and communicating asynchronous tasks while
+waiting in `async_wait`.
+
 ## Implementation
 
 More details soon.

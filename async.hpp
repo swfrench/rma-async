@@ -1,3 +1,5 @@
+/** @file */
+
 #pragma once
 
 #include <cstdlib>
@@ -13,10 +15,15 @@ typedef uint64_t handle_t;
 void async_enable(MPI_Comm);
 void async_disable();
 void async_wait(handle_t h);
+
+/// @cond INTERNAL_DOCS
+
 void _enqueue(int, fptr, void *, size_t);
 void _enqueue_handle(int, fptr, void *, size_t, handle_t *);
 void _enqueue_after(int, fptr, void *, size_t, handle_t);
 void _enqueue_chain(int, fptr, void *, size_t, handle_t, handle_t *);
+
+/// @endcond
 
 // automatically generated template types
 #include "async_templates.hpp"

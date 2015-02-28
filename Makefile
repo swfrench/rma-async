@@ -76,6 +76,13 @@ example : $O $B $B/example.x
 $B/example.x : $O/example.o $(LIB)
 	$(LD) $(LDFLAGS) $O/example.o $(LDLIBS) -o $@
 
+######
+# docs
+
+.PHONY : docs
+docs : doc/config
+	doxygen doc/config
+
 #########
 # cleanup
 
@@ -85,4 +92,4 @@ clean:
 
 .PHONY: distclean
 distclean: clean
-	rm -rf $L $B $(GEN)
+	rm -rf $L $B $(GEN) doc/generated
