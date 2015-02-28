@@ -52,7 +52,9 @@ There are a number of potential areas for improvement:
     encode the type of the asynchronous task function and capture its
     arguments) is a bit awkward. Perhaps we can do something neat with variadic
     templates instead?
-3.  Dependency management between async tasks ("events" similar to UPC++?)
+3.  ~~Dependency management between async tasks ("events" similar to UPC++?).~~
+    A preliminary implementation of inter-task dependency management has been
+    added.
 
 ## References
 
