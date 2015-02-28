@@ -20,6 +20,8 @@ lambdas (regular functions should work as well):
       printf("i'm shipped from rank %i and no one depends on me\n", rank);
     });
 
+    async_barrier();
+
     handle_t h = async_handle(target, [rank] () {
       printf("i'm shipped from rank %i\n", rank);
     });
