@@ -537,3 +537,15 @@ void async_wait(handle_t h)
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 }
+
+/**
+ * Block until all previously invoked tasks have executed (regardless of
+ * whether they have associated handles)
+ */
+void async_barrier()
+{
+  // wait for all outstanding tasks to complete
+  while (cb_get(my_rank))
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  mpi_assert(MPI_Barrier(my_comm));
+}

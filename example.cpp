@@ -40,6 +40,8 @@ main(int argc, char **argv)
     printf("i'm a lambda shipped from rank %i!\n", rank);
   });
 
+  async_barrier(); // wait for all previously invoked tasks
+
   handle_t h1 = async_handle((rank + 1) % size, [rank] () {
     printf("i'm a lambda shipped from rank %i, but i have to happen first!\n",
            rank);
