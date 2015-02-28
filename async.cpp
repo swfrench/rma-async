@@ -38,6 +38,32 @@ typedef unsigned char byte;
 
 /// @cond INTERNAL_DOCS
 
+// async task message
+struct task_msg
+{
+  int origin;
+  bool notify;
+  handle_t handle;
+  fptr task_func;
+  byte task_runner_args[ASYNC_ARGS_SIZE];
+
+  task_msg() {}
+
+  task_msg(int o, fptr tf, byte *ta, size_t sz) :
+    origin(o), task_func(tf), notify(false)
+  {
+    assert(sz <= ASYNC_ARGS_SIZE);
+    memcpy(task_runner_args, ta, sz);
+  }
+
+  void set_notify(handle_t h)
+  {
+    notify = true;
+    handle = h;
+  }
+} __attribute__ ((packed));
+
+// internal representation of outgoing async tasks (not used for messaging)
 struct task
 {
   int origin, target;
@@ -45,11 +71,12 @@ struct task
   handle_t handle, after;
   fptr task_func;
   byte task_runner_args[ASYNC_ARGS_SIZE];
+  size_t args_sz;
 
   task() {}
 
   task(int o, int t, fptr tf, byte *ta, size_t sz) :
-    origin(o), target(t), task_func(tf), depends(false), notify(false)
+    origin(o), target(t), task_func(tf), args_sz(sz), depends(false), notify(false)
   {
     assert(sz <= ASYNC_ARGS_SIZE);
     memcpy(task_runner_args, ta, sz);
@@ -66,10 +93,18 @@ struct task
     notify = true;
     handle = h;
   }
-} __attribute__ ((packed));
 
+  task_msg *to_msg()
+  {
+    task_msg *m = new task_msg(origin, task_func, task_runner_args, args_sz);
+    if (notify)
+      m->set_notify(handle);
+    return m;
+  }
+};
 
-// representation of outgoing task completion notification messages
+// internal representation of outgoing task completion notifications (not used
+// for messaging)
 struct notify
 {
   int target;
@@ -81,7 +116,7 @@ struct notify
 /// @endcond
 
 // inferred async task message size
-#define ASYNC_MSG_SIZE sizeof(struct task)
+#define ASYNC_MSG_SIZE sizeof(struct task_msg)
 
 // length of the async message buffer
 #ifndef ASYNC_MSG_BUFFLEN
@@ -91,7 +126,7 @@ struct notify
 
 // task buffer object: handles incoming / outgoing task messages; managed by
 // the mover thread
-static rma_buff<task> *task_buff;
+static rma_buff<task_msg> *task_buff;
 
 // handle buffer object: handles incoming / outgoing completion notifications;
 // also managed by the mover thread
@@ -114,7 +149,7 @@ static std::mutex outgoing_notify_queue_mtx;
 static std::mutex completed_tasks_mtx;
 
 // task queues
-static std::list<task *> task_queue;
+static std::list<task_msg *> task_queue;
 static std::list<task *> outgoing_task_queue;
 static std::list<notify *> outgoing_notify_queue;
 
@@ -173,7 +208,7 @@ static int cb_get(int target)
  */
 static void mover()
 {
-  task *task_msg_in = new task[ASYNC_MSG_BUFFLEN];
+  task_msg *task_msg_in = new task_msg[ASYNC_MSG_BUFFLEN];
   handle_t *notify_msg_in = new handle_t[ASYNC_MSG_BUFFLEN];
   while (! done) {
     int nmsg;
@@ -185,42 +220,47 @@ static void mover()
     // service incoming tasks (enqueue them for execution)
     if ((nmsg = task_buff->get(task_msg_in, 1)) > 0) {
       for (int i = 0; i < nmsg; i++) {
-        task *t = new task();
+        task_msg *t = new task_msg();
         memcpy(t, (void *)&task_msg_in[i], ASYNC_MSG_SIZE);
         task_queue_mtx.lock();
-        task_queue.push_back((task *) t);
+        task_queue.push_back(t);
         task_queue_mtx.unlock();
       }
     }
 
     // place outgoing tasks on their respective targets
-    task *msg = NULL;
+    task *task_out = NULL;
     outgoing_task_queue_mtx.lock();
     if (! outgoing_task_queue.empty()) {
-      msg = outgoing_task_queue.front();
+      task_out = outgoing_task_queue.front();
       outgoing_task_queue.pop_front();
     }
     outgoing_task_queue_mtx.unlock();
-    if (msg != NULL) {
+    if (task_out != NULL) {
       bool success = false;
-      if (! msg->depends) {
-        success = task_buff->put(msg->target, msg);
+      if (! task_out->depends) {
+        task_msg *msg = task_out->to_msg();
+        success = task_buff->put(task_out->target, msg);
+        delete msg;
       } else {
         int completed;
         completed_tasks_mtx.lock();
-        completed = completed_tasks.count(msg->after);
+        completed = completed_tasks.count(task_out->after);
         completed_tasks_mtx.unlock();
-        if (completed)
-          success = task_buff->put(msg->target, msg);
+        if (completed) {
+          task_msg *msg = task_out->to_msg();
+          success = task_buff->put(task_out->target, msg);
+          delete msg;
+        }
       }
       if (success) {
         // success: clean up
-        delete msg;
+        delete task_out;
       } else {
         // failure: the target buffer must be full or the dependency has not
         // yet executed; put the message back in the queue and retry later
         outgoing_task_queue_mtx.lock();
-        outgoing_task_queue.push_back(msg);
+        outgoing_task_queue.push_back(task_out);
         outgoing_task_queue_mtx.unlock();
       }
     }
@@ -269,7 +309,7 @@ static void mover()
 static void executor()
 {
   while (! done) {
-    task *msg = NULL;
+    task_msg *msg = NULL;
     task_queue_mtx.lock();
     if (! task_queue.empty()) {
       msg = task_queue.front();
@@ -312,9 +352,11 @@ void _enqueue(int target, fptr rp, void *tp, size_t sz)
 {
   task *t = new task(my_rank, target, rp, (byte *)tp, sz);
   if (target == my_rank) {
+    task_msg *m = t->to_msg();
     task_queue_mtx.lock();
-    task_queue.push_back(t);
+    task_queue.push_back(m);
     task_queue_mtx.unlock();
+    delete t;
   } else {
     outgoing_task_queue_mtx.lock();
     outgoing_task_queue.push_back(t);
@@ -346,9 +388,11 @@ void _enqueue_handle(int target, fptr rp, void *tp, size_t sz, handle_t *h)
   task *t = new task(my_rank, target, rp, (byte *)tp, sz);
   t->set_notify(*h);
   if (target == my_rank) {
+    task_msg *m = t->to_msg();
     task_queue_mtx.lock();
-    task_queue.push_back(t);
+    task_queue.push_back(m);
     task_queue_mtx.unlock();
+    delete t;
   } else {
     outgoing_task_queue_mtx.lock();
     outgoing_task_queue.push_back(t);
@@ -380,9 +424,11 @@ void _enqueue_after(int target, fptr rp, void *tp, size_t sz, handle_t a)
   task *t = new task(my_rank, target, rp, (byte *)tp, sz);
   t->set_depends(a);
   if (target == my_rank) {
+    task_msg *m = t->to_msg();
     task_queue_mtx.lock();
-    task_queue.push_back(t);
+    task_queue.push_back(m);
     task_queue_mtx.unlock();
+    delete t;
   } else {
     outgoing_task_queue_mtx.lock();
     outgoing_task_queue.push_back(t);
@@ -417,9 +463,11 @@ void _enqueue_chain(int target, fptr rp, void *tp, size_t sz, handle_t a, handle
   t->set_depends(a);
   t->set_notify(*h);
   if (target == my_rank) {
+    task_msg *m = t->to_msg();
     task_queue_mtx.lock();
-    task_queue.push_back(t);
+    task_queue.push_back(m);
     task_queue_mtx.unlock();
+    delete t;
   } else {
     outgoing_task_queue_mtx.lock();
     outgoing_task_queue.push_back(t);
@@ -463,7 +511,7 @@ void async_enable(MPI_Comm comm)
   mpi_assert(MPI_Win_lock_all(MPI_MODE_NOCHECK, cb_win));
 
   // setup the task and notify buffers
-  task_buff = new rma_buff<task>(1, ASYNC_MSG_BUFFLEN, comm);
+  task_buff = new rma_buff<task_msg>(1, ASYNC_MSG_BUFFLEN, comm);
   notify_buff = new rma_buff<handle_t>(1, ASYNC_MSG_BUFFLEN, comm);
 
   // setup the progress threads
