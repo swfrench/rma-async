@@ -8,8 +8,9 @@
 // generic function pointer used throughout
 typedef void (*fptr)(void *);
 
-// type for identifying asyncs
+// type for identifying asyncs (and helper fmt)
 typedef uint64_t handle_t;
+#define FMT_HANDLE "%llu"
 
 // public function prototypes
 void async_enable(MPI_Comm);
