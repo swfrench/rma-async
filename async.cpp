@@ -17,11 +17,18 @@
 
 #include "async.hpp"
 
+#ifndef mpi_assert
+#define mpi_assert(X) assert(X == MPI_SUCCESS);
+#endif
+
 // generic byte
 typedef unsigned char byte;
 
 // default max size for the packed async runner argument buffer
+#ifndef ASYNC_ARGS_SIZE
 #define ASYNC_ARGS_SIZE 512
+#endif
+
 
 // task representation for messaging and internal queues
 struct task
@@ -54,23 +61,25 @@ struct task
   }
 } __attribute__ ((packed));
 
-//
+
+// representation of outgoing task completion notification messages
 struct notify
 {
   int target;
   handle_t handle;
+
   notify(int t, handle_t h) : target(t), handle(h) {}
 };
+
 
 // inferred async task message size
 #define ASYNC_MSG_SIZE sizeof(struct task)
 
 // length of the async message buffer
+#ifndef ASYNC_MSG_BUFFLEN
 #define ASYNC_MSG_BUFFLEN 2048
-
-#ifndef mpi_assert
-#define mpi_assert(X) assert(X == MPI_SUCCESS);
 #endif
+
 
 // task buffer object: handles incoming / outgoing task messages; managed by
 // the mover thread
@@ -111,6 +120,7 @@ static MPI_Win cb_win;
 
 // completed task handle set
 static std::unordered_set<handle_t> completed_tasks;
+
 
 /*
  * Decrement the callback counter on the specified rank
@@ -163,6 +173,7 @@ static int cb_get(int target)
     cb_mutex.unlock();
   return val;
 }
+
 
 /*
  * Action performed by the mover progress thread: moves async tasks in and out
@@ -277,6 +288,7 @@ static void executor()
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 } /* static void executor() */
+
 
 /**
  * Route a task to the correct queue for exection on the target: variant 1
