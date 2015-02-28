@@ -26,11 +26,11 @@ lambdas (regular functions should work as well):
       printf("i'm shipped from rank %i\n", rank);
     });
 
-    handle_t h2 = async_chain(h1, target, [rank] () {
+    handle_t h2 = async_chain({h1}, target, [rank] () {
       printf("i'm shipped from rank %i, but i had to wait to execute\n", rank);
     });
 
-    async_after(h2, target, [rank] (int x, int y) {
+    async_after({h2}, target, [rank] (int x, int y) {
       printf("i'm shipped from rank %i and i will be the last (oh and %i + %i = %i)\n", rank, x, y, x + y);
     }, 3, 4);
 
@@ -38,7 +38,9 @@ lambdas (regular functions should work as well):
 
 There's also `async_chain`, which combines the ordering functionality of
 `async_handle` and `async_after`, as well as `async_wait` for explicitly
-waiting on completion of an ealier task.
+waiting on completion of an ealier task. Note also that task dependencies are
+specified within C++11 `initialization_list`s (a syntax-light way of specifying
+multiple dependencies).
 
 Note that due to the use of progress threads under the hood, we will continue
 to make progress on executing and communicating asynchronous tasks while
@@ -90,9 +92,9 @@ There are a number of potential areas for improvement:
 3.  ~~Dependency management between async tasks ("events" similar to UPC++?).~~
     A preliminary implementation of inter-task dependency management has been
     added.
-4.  The dependency model is currently tree-like (an async can have only one
+4.  ~~The dependency model is currently tree-like (an async can have only one
     dependency but any number of dependents). Should this instead support more
-    general DAGs?
+    general DAGs?~~ Each task can now have multiple dependencies, see `example.cpp`.
 
 ## References
 
