@@ -1,63 +1,104 @@
-#include <stdio.h>
-#include <assert.h>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <cassert>
+
 #include <mpi.h>
 
 #include "async.hpp"
 
-void
-func0()
-{
-  printf("[%s] hello!\n", __func__);
-}
-
-void
-func2(int x, int y)
+/*
+ * a simple arity-two function to be executed asynchronously
+ */
+void func2(int x, int y)
 {
   printf("[%s] x + y = %i\n", __func__, x + y);
 }
 
-int
-main(int argc, char **argv)
+/*
+ * select a random target (yes, we could do this a lot better)
+ */
+int random_target(int size)
+{
+  static bool seeded = false;
+  if (! seeded) {
+    srand(time(NULL));
+    seeded = true;
+  }
+  return rand() % size;
+}
+
+/*
+ * example invocation of async tasks
+ */
+void example(int rank, int size)
+{
+  int target;
+
+  // async exection starts ...
+  async_enable(MPI_COMM_WORLD);
+
+  // here we invoke func2 for execution on target with args {1,2}
+  target = random_target(size);
+  async(target, func2, 1, 2);
+
+  // this is safe to do if you want ... progress is made asynchronously on a
+  // duplicate communicator
+  MPI_Barrier(MPI_COMM_WORLD);
+
+  // you can also use lambdas in lieu of regular functions
+  target = random_target(size);
+  async(target, [rank, target] () {
+    printf("lambda shipped from rank %i to rank %i!\n", rank, target);
+  });
+
+  // if needed, you can sync across ranks and wait for all previously invoked
+  // tasks to execute
+  async_barrier();
+
+  // you can also have asyncs depend on earlier ones
+
+  // - this one has no dependencies, but others will depend on it
+  target = random_target(size);
+  handle_t h1 = async_handle(target, [rank, target] () {
+    printf("lambda shipped from rank %i to rank %i!\n", rank, target);
+  });
+
+  // - this one depends on the last and a later one will also depend on it
+  target = random_target(size);
+  handle_t h2 = async_chain(h1, target, [rank, target, h1] () {
+    printf("lambda shipped from rank %i to rank %i, that must run after the "
+           "async with handle " FMT_HANDLE "\n", rank, target, h1);
+  });
+
+  // - this one only depends on the last async (it has no dependents)
+  target = random_target(size);
+  async_after(h2, target, [rank, target, h2] (int x, int y) {
+    printf("lambda shipped from rank %i to rank %i, that must run after the "
+           "async with handle " FMT_HANDLE " (oh and %i + %i = %i)\n",
+           rank, target, h2, x, y, x + y);
+  }, 3, 7);
+
+  // async execution stops
+  async_disable();
+}
+
+
+int main(int argc, char **argv)
 {
   int requested, provided, rank, size;
 
+  // ensure proper threading support is enabled
   requested = MPI_THREAD_MULTIPLE;
   MPI_Init_thread(&argc, &argv, requested, &provided);
   assert(provided >= requested);
 
+  // get communicator details
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-  async_enable(MPI_COMM_WORLD);
-
-  async((rank + 1) % size, func0);
-
-  async((rank + 1) % size, func2, 1, 2);
-
-  MPI_Barrier(MPI_COMM_WORLD); // this is safe to do if you want
-
-  async((rank + 1) % size, [rank] () {
-    printf("i'm a lambda shipped from rank %i!\n", rank);
-  });
-
-  async_barrier(); // wait for all previously invoked tasks
-
-  handle_t h1 = async_handle((rank + 1) % size, [rank] () {
-    printf("i'm a lambda shipped from rank %i, but i have to happen first!\n",
-           rank);
-  });
-
-  handle_t h2 = async_chain(h1, (rank + 1) % size, [rank,h1] () {
-    printf("i'm a lambda shipped from rank %i, and i'm running after %lli!\n",
-           rank, h1);
-  });
-
-  async_after(h2, (rank + 1) % size, [rank,h2] (int x, int y) {
-    printf("i'm a lambda shipped from rank %i, and i'm running after %lli (oh and %i + %i = %i)!\n",
-           rank, h2, x, y, x + y);
-  }, 3, 7);
-
-  async_disable();
+  // run the example
+  example(rank, size);
 
   MPI_Finalize();
 
