@@ -443,7 +443,7 @@ void _enqueue_after(int target, fptr rp, void *tp, size_t sz, handle_t a)
 }
 
 /**
- * Route a task to the correct queue for exection on the target: variant 3
+ * Route a task to the correct queue for exection on the target: variant 4
  *
  * This routine will fast-path to our own local execution queue if we are in
  * fact the target. While it is not a user-facing function per se, it is called
@@ -458,10 +458,10 @@ void _enqueue_after(int target, fptr rp, void *tp, size_t sz, handle_t a)
  * \param rp pointer to the appropriate runner function
  * \param tp pointer to the packed task data (function pointer and args)
  * \param sz size (bytes) of the packed task data
- * \param a the handle for the async after which this one may execute
  * \param h pointer to which this task's handle will be written
+ * \param a the handle for the async after which this one may execute
  */
-void _enqueue_chain(int target, fptr rp, void *tp, size_t sz, handle_t a, handle_t *h)
+void _enqueue_chain(int target, fptr rp, void *tp, size_t sz, handle_t *h, handle_t a)
 {
   *h = handle_source++;
   task *t = new task(my_rank, target, rp, (byte *)tp, sz);

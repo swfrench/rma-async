@@ -130,7 +130,7 @@ handle_t async_chain(handle_t a, int target, F f)
   handle_t h;
   task0<F> *t = new task0<F>(f);
   fptr rp = (fptr) runner<F>;
-  _enqueue_chain(target, rp, (void *)t, sizeof(*t), a, &h);
+  _enqueue_chain(target, rp, (void *)t, sizeof(*t), &h, a);
   return h;
 }
 
@@ -237,7 +237,7 @@ handle_t async_chain(handle_t a, int target, $proto)
   handle_t h;
   $name<$ttypes> *t = new $name<$ttypes>($proto_vars);
   fptr rp = (fptr) runner<$ttypes>;
-  _enqueue_chain(target, rp, (void *)t, sizeof(*t), a, &h);
+  _enqueue_chain(target, rp, (void *)t, sizeof(*t), &h, a);
   return h;
 }
 
