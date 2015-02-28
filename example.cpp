@@ -64,19 +64,28 @@ void example(int rank, int size)
     printf("lambda shipped from rank %i to rank %i!\n", rank, target);
   });
 
-  // - this one depends on the last and a later one will also depend on it
+  // - this one also has no dependencies, but others will depend on it
   target = random_target(size);
-  handle_t h2 = async_chain(h1, target, [rank, target, h1] () {
-    printf("lambda shipped from rank %i to rank %i, that must run after the "
-           "async with handle " FMT_HANDLE "\n", rank, target, h1);
+  handle_t h2 = async_handle(target, [rank, target] () {
+    printf("lambda shipped from rank %i to rank %i!\n", rank, target);
+  });
+
+  // - this one depends on both of the earlier ones, and the next one is a
+  //   dependent of this one
+  target = random_target(size);
+  handle_t h3 = async_chain({h1, h2}, target, [rank, target, h1, h2] () {
+    printf("lambda shipped from rank %i to rank %i, that must run after "
+           "asyncs with handles " FMT_HANDLE " and " FMT_HANDLE "\n",
+           rank, target, h1, h2);
   });
 
   // - this one only depends on the last async (it has no dependents)
   target = random_target(size);
-  async_after(h2, target, [rank, target, h2] (int x, int y) {
+  async_after({h3}, target, [rank, target, h3] (int x, int y) {
     printf("lambda shipped from rank %i to rank %i, that must run after the "
-           "async with handle " FMT_HANDLE " (oh and %i + %i = %i)\n",
-           rank, target, h2, x, y, x + y);
+           "async with handle " FMT_HANDLE " (oh and here's some computation: "
+           "%i + %i = %i)\n",
+           rank, target, h3, x, y, x + y);
   }, 3, 7);
 
   // async execution stops

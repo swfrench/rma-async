@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include <initializer_list>
+
 #include <cstdlib>
 #include <cstdint>
 
@@ -22,8 +24,8 @@ void async_barrier();
 
 void _enqueue(int, fptr, void *, size_t);
 void _enqueue_handle(int, fptr, void *, size_t, handle_t *);
-void _enqueue_after(int, fptr, void *, size_t, handle_t);
-void _enqueue_chain(int, fptr, void *, size_t, handle_t *, handle_t);
+void _enqueue_after(int, fptr, void *, size_t, std::initializer_list<handle_t>);
+void _enqueue_chain(int, fptr, void *, size_t, handle_t *, std::initializer_list<handle_t>);
 
 /// @endcond
 

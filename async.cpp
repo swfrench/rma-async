@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <initializer_list>
 #include <list>
 #include <mutex>
 #include <thread>
@@ -422,12 +423,13 @@ void _enqueue_handle(int target, fptr rp, void *tp, size_t sz, handle_t *h)
  * \param rp pointer to the appropriate runner function
  * \param tp pointer to the packed task data (function pointer and args)
  * \param sz size (bytes) of the packed task data
- * \param a the handle for the async after which this one may execute
+ * \param a the list of handles for asyncs after which this one may execute
  */
-void _enqueue_after(int target, fptr rp, void *tp, size_t sz, handle_t a)
+void _enqueue_after(int target, fptr rp, void *tp, size_t sz, std::initializer_list<handle_t> a)
 {
   task *t = new task(my_rank, target, rp, (byte *)tp, sz);
-  t->set_depends(a);
+  for (handle_t e : a)
+    t->set_depends(e);
   if (target == my_rank) {
     task_msg *m = t->to_msg();
     task_queue_mtx.lock();
@@ -459,13 +461,14 @@ void _enqueue_after(int target, fptr rp, void *tp, size_t sz, handle_t a)
  * \param tp pointer to the packed task data (function pointer and args)
  * \param sz size (bytes) of the packed task data
  * \param h pointer to which this task's handle will be written
- * \param a the handle for the async after which this one may execute
+ * \param a the list of handles for asyncs after which this one may execute
  */
-void _enqueue_chain(int target, fptr rp, void *tp, size_t sz, handle_t *h, handle_t a)
+void _enqueue_chain(int target, fptr rp, void *tp, size_t sz, handle_t *h, std::initializer_list<handle_t> a)
 {
   *h = handle_source++;
   task *t = new task(my_rank, target, rp, (byte *)tp, sz);
-  t->set_depends(a);
+  for (handle_t e : a)
+    t->set_depends(e);
   t->set_notify(*h);
   if (target == my_rank) {
     task_msg *m = t->to_msg();

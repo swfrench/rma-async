@@ -70,6 +70,8 @@ cat << END > $ASYNC_TASK_INVOKE
 // automatically generated $(date)
 #pragma once
 
+#include <initializer_list>
+
 /*
  * User-facing async invocation calls (overloaded)
  */
@@ -104,13 +106,13 @@ handle_t async_handle(int target, F f)
 }
 
 /**
- * Invoke an async task of zero arguments, accepting a \c handle_t from a task
- * upon which this one depends
+ * Invoke an async task of zero arguments, accepting a list of \c handle_t from
+ * tasks upon which this one depends
  *
  * This function is automatically generated.
  */
 template<typename F>
-void async_after(handle_t a, int target, F f)
+void async_after(std::initializer_list<handle_t> a, int target, F f)
 {
   task0<F> *t = new task0<F>(f);
   fptr rp = (fptr) runner<F>;
@@ -118,14 +120,14 @@ void async_after(handle_t a, int target, F f)
 }
 
 /**
- * Invoke an async task of zero arguments, accepting a \c handle_t from a task
- * upon which this one depends and returning yet another \c handle_t for later
- * use in dependency tracking
+ * Invoke an async task of zero arguments, accepting a list of \c handle_t from
+ * tasks upon which this one depends and returning yet another \c handle_t for
+ * later use in dependency tracking
  *
  * This function is automatically generated.
  */
 template<typename F>
-handle_t async_chain(handle_t a, int target, F f)
+handle_t async_chain(std::initializer_list<handle_t> a, int target, F f)
 {
   handle_t h;
   task0<F> *t = new task0<F>(f);
@@ -211,13 +213,13 @@ handle_t async_handle(int target, $proto)
 }
 
 /**
- * Invoke an async task of $n arguments, accepting a \c handle_t from a task
- * upon which this one depends
+ * Invoke an async task of $n arguments, accepting a list of \c handle_t from
+ * tasks upon which this one depends
  *
  * This function is automatically generated.
  */
 template<$template>
-void async_after(handle_t a, int target, $proto)
+void async_after(std::initializer_list<handle_t> a, int target, $proto)
 {
   $name<$ttypes> *t = new $name<$ttypes>($proto_vars);
   fptr rp = (fptr) runner<$ttypes>;
@@ -225,14 +227,14 @@ void async_after(handle_t a, int target, $proto)
 }
 
 /**
- * Invoke an async task of $n arguments, accepting a \c handle_t from a task
- * upon which this one depends and returning yet another \c handle_t for later
- * use in dependency tracking
+ * Invoke an async task of $n arguments, accepting a list of \c handle_t from
+ * tasks upon which this one depends and returning yet another \c handle_t for
+ * later use in dependency tracking
  *
  * This function is automatically generated.
  */
 template<$template>
-handle_t async_chain(handle_t a, int target, $proto)
+handle_t async_chain(std::initializer_list<handle_t> a, int target, $proto)
 {
   handle_t h;
   $name<$ttypes> *t = new $name<$ttypes>($proto_vars);
