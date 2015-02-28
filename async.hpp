@@ -17,7 +17,7 @@ typedef uint64_t handle_t;
 // public function prototypes
 void async_enable(MPI_Comm);
 void async_disable();
-void async_wait(handle_t h);
+void async_wait(std::initializer_list<handle_t>);
 void async_barrier();
 
 /// @cond INTERNAL_DOCS

@@ -569,16 +569,17 @@ void async_disable()
  * Progress will still be made on enqueued tasks and communications while
  * blocking, owing to the multithreaded nature of the library.
  *
- * \param h the \c handle_t associated with the task to wait for
+ * \param h the list of \c handle_t associated with the tasks to wait for
  */
-void async_wait(handle_t h)
+void async_wait(std::initializer_list<handle_t> h)
 {
   for (;;) {
-    int completed;
+    int completed = 0;
     completed_tasks_mtx.lock();
-    completed = completed_tasks.count(h);
+    for (handle_t e : h)
+      completed += completed_tasks.count(e);
     completed_tasks_mtx.unlock();
-    if (completed)
+    if (completed == h.size())
       return;
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
