@@ -11,6 +11,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_set>
+#include <vector>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,7 +69,8 @@ struct task
 {
   int origin, target;
   bool depends, notify;
-  handle_t handle, after;
+  handle_t handle;
+  std::vector<handle_t> after;
   fptr task_func;
   byte task_runner_args[ASYNC_ARGS_SIZE];
   size_t args_sz;
@@ -85,7 +87,7 @@ struct task
   void set_depends(handle_t a)
   {
     depends = true;
-    after = a;
+    after.push_back(a);
   }
 
   void set_notify(handle_t h)
@@ -243,11 +245,14 @@ static void mover()
         success = task_buff->put(task_out->target, msg);
         delete msg;
       } else {
-        int completed;
+        int completed = 0;
         completed_tasks_mtx.lock();
-        completed = completed_tasks.count(task_out->after);
+        for (std::vector<handle_t>::iterator it = task_out->after.begin();
+             it != task_out->after.end();
+             it += 1)
+          completed += completed_tasks.count(*it);
         completed_tasks_mtx.unlock();
-        if (completed) {
+        if (completed == task_out->after.size()) {
           task_msg *msg = task_out->to_msg();
           success = task_buff->put(task_out->target, msg);
           delete msg;
