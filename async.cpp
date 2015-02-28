@@ -222,6 +222,8 @@ static void mover()
     if (msg != NULL) {
       bool success = false;
       if (! msg->depends) {
+        success = task_buff->put(msg->target, msg);
+      } else {
         int completed;
         completed_tasks_mtx.lock();
         completed = completed_tasks.count(msg->after);
