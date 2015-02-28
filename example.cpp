@@ -52,10 +52,10 @@ main(int argc, char **argv)
            rank, h1);
   });
 
-  async_after(h2, (rank + 1) % size, [rank,h2] () {
-    printf("i'm a lambda shipped from rank %i, and i'm running after %lli!\n",
-           rank, h2);
-  });
+  async_after(h2, (rank + 1) % size, [rank,h2] (int x, int y) {
+    printf("i'm a lambda shipped from rank %i, and i'm running after %lli (oh and %i + %i = %i)!\n",
+           rank, h2, x, y, x + y);
+  }, 3, 7);
 
   async_disable();
 

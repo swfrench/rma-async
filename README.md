@@ -22,13 +22,17 @@ lambdas (regular functions should work as well):
 
     async_barrier();
 
-    handle_t h = async_handle(target, [rank] () {
+    handle_t h1 = async_handle(target, [rank] () {
       printf("i'm shipped from rank %i\n", rank);
     });
 
-    async_after(h, target, [rank] () {
+    handle_t h2 = async_chain(h1, target, [rank] () {
       printf("i'm shipped from rank %i, but i had to wait to execute\n", rank);
     });
+
+    async_after(h2, target, [rank] (int x, int y) {
+      printf("i'm shipped from rank %i and i will be the last (oh and %i + %i = %i)\n", rank, x, y, x + y);
+    }, 3, 4);
 
     async_disable();
 
