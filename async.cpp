@@ -465,7 +465,7 @@ void async_enable(MPI_Comm comm)
   assert(mpi_thread == MPI_THREAD_MULTIPLE);
 
   // set communicator and rank
-  my_comm = comm;
+  mpi_assert(MPI_Comm_dup(comm, &my_comm));
   mpi_assert(MPI_Comm_rank(my_comm, &my_rank));
 
   // setup callback counter
