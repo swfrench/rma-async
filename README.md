@@ -95,6 +95,11 @@ There are a number of potential areas for improvement:
 4.  ~~The dependency model is currently tree-like (an async can have only one
     dependency but any number of dependents). Should this instead support more
     general DAGs?~~ Each task can now have multiple dependencies, see `example.cpp`.
+5.  A thread pool for executing async tasks (as opposed to a single thread).
+6.  The ability to invoke an async task without specifying a target, in which
+    case one will be selected at random provided that it is not overly busy.
+7.  Related: when a specific execution target is not provided, perhaps allow
+    for randomized work-stealing across ranks.
 
 ## References
 
