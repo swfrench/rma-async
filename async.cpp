@@ -470,8 +470,9 @@ void async_enable(MPI_Comm comm)
 void async_disable()
 {
   // wait for all outstanding tasks to complete
-  while (cb_get(my_rank))
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  wait_exp([] () { return cb_get(my_rank) > 0; },
+           std::chrono::milliseconds(1),
+           std::chrono::milliseconds(1000));
 
   // synchronize
   mpi_assert(MPI_Barrier(my_comm));
