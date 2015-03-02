@@ -1,5 +1,8 @@
 #pragma once
 
+#include <chrono>
+#include <thread>
+
 /// @cond INTERNAL_DOCS
 
 // generic byte type used throughout
