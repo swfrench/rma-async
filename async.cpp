@@ -25,107 +25,12 @@
 #include "rma-buffer/rma_buff.hpp"
 
 #include "async.hpp"
+#include "async_internal.hpp"
 
-#ifndef mpi_assert
-#define mpi_assert(X) assert(X == MPI_SUCCESS);
-#endif
 
-// generic byte
-typedef unsigned char byte;
-
-// default max size for the packed async runner argument buffer
-#ifndef ASYNC_ARGS_SIZE
-#define ASYNC_ARGS_SIZE 512
-#endif
-
-/// @cond INTERNAL_DOCS
-
-// async task message
-struct task_msg
-{
-  int origin;
-  bool notify;
-  handle_t handle;
-  fptr task_func;
-  byte task_runner_args[ASYNC_ARGS_SIZE];
-
-  task_msg() {}
-
-  task_msg(int o, fptr tf, byte *ta, size_t sz) :
-    origin(o), task_func(tf), notify(false)
-  {
-    assert(sz <= ASYNC_ARGS_SIZE);
-    memcpy(task_runner_args, ta, sz);
-  }
-
-  void set_notify(handle_t h)
-  {
-    notify = true;
-    handle = h;
-  }
-} __attribute__ ((packed));
-
-// internal representation of outgoing async tasks (not used for messaging)
-struct task
-{
-  int origin, target;
-  bool depends, notify;
-  handle_t handle;
-  std::vector<handle_t> after;
-  fptr task_func;
-  byte task_runner_args[ASYNC_ARGS_SIZE];
-  size_t args_sz;
-
-  task() {}
-
-  task(int o, int t, fptr tf, byte *ta, size_t sz) :
-    origin(o), target(t), task_func(tf), args_sz(sz), depends(false), notify(false)
-  {
-    assert(sz <= ASYNC_ARGS_SIZE);
-    memcpy(task_runner_args, ta, sz);
-  }
-
-  void set_depends(handle_t a)
-  {
-    depends = true;
-    after.push_back(a);
-  }
-
-  void set_notify(handle_t h)
-  {
-    notify = true;
-    handle = h;
-  }
-
-  task_msg *to_msg()
-  {
-    task_msg *m = new task_msg(origin, task_func, task_runner_args, args_sz);
-    if (notify)
-      m->set_notify(handle);
-    return m;
-  }
-};
-
-// internal representation of outgoing task completion notifications (not used
-// for messaging)
-struct notify
-{
-  int target;
-  handle_t handle;
-
-  notify(int t, handle_t h) : target(t), handle(h) {}
-};
-
-/// @endcond
-
-// inferred async task message size
-#define ASYNC_MSG_SIZE sizeof(struct task_msg)
-
-// length of the async message buffer
-#ifndef ASYNC_MSG_BUFFLEN
-#define ASYNC_MSG_BUFFLEN 2048
-#endif
-
+/***************************************
+ * Internal data structures (file scope)
+ */
 
 // task buffer object: handles incoming / outgoing task messages; managed by
 // the mover thread
@@ -168,8 +73,14 @@ static MPI_Win cb_win;
 static std::unordered_set<handle_t> completed_tasks;
 
 
-/*
+/**************************
+ * RMA shared counter utils
+ */
+
+/**
  * Decrement the callback counter on the specified rank
+ *
+ * \param target target rank on which to increment the counter
  */
 static void cb_dec(int target)
 {
@@ -180,8 +91,10 @@ static void cb_dec(int target)
   mpi_assert(MPI_Win_flush(target, cb_win));
 }
 
-/*
+/**
  * Increment the callback counter on the specified rank
+ *
+ * \param target target rank on which to increment the counter
  */
 static void cb_inc(int target)
 {
@@ -192,8 +105,10 @@ static void cb_inc(int target)
   mpi_assert(MPI_Win_flush(target, cb_win));
 }
 
-/*
+/**
  * Get the callback counter on the specified rank
+ *
+ * \param target target rank from which to retrieve that counter value
  */
 static int cb_get(int target)
 {
@@ -205,9 +120,15 @@ static int cb_get(int target)
 }
 
 
-/*
- * Action performed by the mover progress thread: moves async tasks in and out
- * of the rma_buff object to / from their respective queues.
+/*************************
+ * Progress thread actions
+ */
+
+/**
+ * Action performed by the mover progress thread
+ *
+ * Moves async tasks and completion notifications in and out of the rma_buff
+ * objects to / from their respective queues.
  */
 static void mover()
 {
@@ -308,9 +229,11 @@ static void mover()
   delete [] task_msg_in;
 } /* static void mover() */
 
-/*
- * Action performed by the executor thread: remove tasks from the queue and run
- * them (remembering to decrement the origin callback counter thereafter)
+/**
+ * Action performed by the executor thread
+ *
+ * Remove tasks from the queue and run them (remembering to decrement the
+ * origin callback counter and enqueue associated notifications thereafter)
  */
 static void executor()
 {
@@ -337,6 +260,10 @@ static void executor()
   }
 } /* static void executor() */
 
+
+/************************
+ * Utils to enqueue tasks
+ */
 
 /**
  * Route a task to the correct queue for exection on the target: variant 1
@@ -485,6 +412,10 @@ void _enqueue_chain(int target, fptr rp, void *tp, size_t sz, handle_t *h, std::
 }
 
 
+/****************************************
+ * Library init / deinit, synchronization
+ */
+
 /**
  * Enable asynchronous task execution among ranks on the supplied communicator
  *
@@ -573,16 +504,16 @@ void async_disable()
  */
 void async_wait(std::initializer_list<handle_t> h)
 {
-  for (;;) {
-    int completed = 0;
-    completed_tasks_mtx.lock();
-    for (handle_t e : h)
-      completed += completed_tasks.count(e);
-    completed_tasks_mtx.unlock();
-    if (completed == h.size())
-      return;
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  wait_exp([h] () {
+      int completed = 0;
+      completed_tasks_mtx.lock();
+      for (handle_t e : h)
+        completed += completed_tasks.count(e);
+      completed_tasks_mtx.unlock();
+      return completed < h.size();
+    },
+    std::chrono::milliseconds(1),
+    std::chrono::milliseconds(1000));
 }
 
 /**
@@ -592,7 +523,8 @@ void async_wait(std::initializer_list<handle_t> h)
 void async_barrier()
 {
   // wait for all outstanding tasks to complete
-  while (cb_get(my_rank))
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  wait_exp([] () { return cb_get(my_rank) > 0; },
+           std::chrono::milliseconds(1),
+           std::chrono::milliseconds(1000));
   mpi_assert(MPI_Barrier(my_comm));
 }
