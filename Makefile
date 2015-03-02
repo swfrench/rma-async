@@ -3,7 +3,7 @@
 
 # compilation
 CXX = mpicxx
-CXXFLAGS = -g -O2 --std=c++11 -fno-PIE
+CXXFLAGS = -g -O2 --std=c++11 -fno-PIE -Iinclude -Irma-buffer
 
 # linking
 LD = mpicxx
@@ -21,9 +21,11 @@ NUM_PARAMS_GEN=10
 # static config
 
 # auto-generated header files
-GEN = gen.async_task_data.hpp gen.async_task_run.hpp gen.async_task_invoke.hpp
+GEN = include/gen.async_task_data.hpp include/gen.async_task_run.hpp include/gen.async_task_invoke.hpp
 
 # paths
+S = src
+E = example
 O = obj
 L = lib
 B = bin
@@ -57,15 +59,18 @@ $B :
 #####################
 # general compilation
 
-$O/%.o : %.cpp async.hpp $(GEN)
+$O/%.o : $S/%.cpp include/async.hpp include/async_internal.hpp $(GEN)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$O/%.o : $E/%.cpp include/async.hpp include/async_internal.hpp $(GEN)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 ########################
 # auto-generated headers
 
-$(GEN) : auto_gen.sh
+$(GEN) : util/auto_gen.sh
 	@echo "generating header files ..."
-	@./auto_gen.sh $(NUM_PARAMS_GEN)
+	@./util/auto_gen.sh $(NUM_PARAMS_GEN)
 
 #########
 # example

@@ -6,9 +6,9 @@ set -e
 DEFAULT_NUM_PARAMETERS=6
 
 # header file names
-ASYNC_TASK_DATA=gen.async_task_data.hpp
-ASYNC_TASK_RUN=gen.async_task_run.hpp
-ASYNC_TASK_INVOKE=gen.async_task_invoke.hpp
+ASYNC_TASK_DATA=include/gen.async_task_data.hpp
+ASYNC_TASK_RUN=include/gen.async_task_run.hpp
+ASYNC_TASK_INVOKE=include/gen.async_task_invoke.hpp
 
 ################################################################################
 # args

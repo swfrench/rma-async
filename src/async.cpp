@@ -22,7 +22,7 @@
 
 #include <mpi.h>
 
-#include "rma-buffer/rma_buff.hpp"
+#include "rma_buff.hpp"
 
 #include "async.hpp"
 #include "async_internal.hpp"
