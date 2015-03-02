@@ -80,7 +80,7 @@ $B/example.x : $O/example.o $(LIB)
 # docs
 
 .PHONY : docs
-docs : doc/config
+docs : $(GEN) doc/config
 	doxygen doc/config
 
 #########

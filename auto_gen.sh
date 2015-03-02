@@ -66,7 +66,12 @@ END
 
 # task invocation
 cat << END > $ASYNC_TASK_INVOKE
-/** @file */
+/** @file
+ * Async task invocation wrappers
+ *
+ * These have been automatically generated for functions of arity up to $NUM_PARAMETERS.
+ */
+
 // automatically generated $(date)
 #pragma once
 
